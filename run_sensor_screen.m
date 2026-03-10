@@ -33,6 +33,7 @@ op.perm_top   = 3;
 op.n_perm     = 100;
 op.plot       = true;
 op.sensors    = [];  % Override sensor list (applies to all cell lines)
+op.rm_xsout   = true;  % Pass to pls.m — disable T² outlier removal if false
 op = ct_input(varargin, op);
 
 cls = op.cell_lines;
@@ -43,7 +44,9 @@ for ci = 1:numel(cls)
     if ~isempty(op.sensors)
         sensors = op.sensors;
     else
-        sensors = sensor_default.(cl);
+        % Auto-detect sensors from feature names
+        tags = regexp(S.pls.(cl).parms, '_([a-z]+)$', 'tokens');
+        sensors = unique(cellfun(@(x) x{1}{1}, tags, 'UniformOutput', false), 'stable');
     end
     nsens   = numel(sensors);
 
@@ -69,10 +72,10 @@ for ci = 1:numel(cls)
 
     % --- Preallocate results ---
     combo_labels = cell(ncombo, 1);
-    n_features   = zeros(ncombo, 1);
-    R2           = zeros(ncombo, 1);
-    cv_mse       = zeros(ncombo, 1);
-    n_cells      = zeros(ncombo, 1);
+    n_features   = nan(ncombo, 1);
+    R2           = nan(ncombo, 1);
+    cv_mse       = nan(ncombo, 1);
+    n_cells      = nan(ncombo, 1);
 
     % --- Sweep combinations ---
     for mi = 1:ncombo
@@ -85,12 +88,19 @@ for ci = 1:numel(cls)
         parms_sub  = parms(col_idx);
         n_features(mi) = sum(col_idx);
 
+        % Skip if no features for this combination
+        if n_features(mi) == 0
+            fprintf('  [%2d/%2d] %-30s  nf= 0  ** SKIPPED (no features) **\n', ...
+                    mi, ncombo, combo_labels{mi});
+            continue
+        end
+
         % Cap ncomp at n_features
         nc = min(op.ncomp, n_features(mi));
 
         % Fit
         z = pls(X_sub, y, 'ncomp', nc, 'cv', op.cv, 'ploton', false, ...
-                'params', parms_sub, 'append', true);
+                'params', parms_sub, 'append', true, 'rm_xsout', op.rm_xsout);
 
         R2(mi)      = sum(z.PCTVAR(2,:));
         cv_mse(mi)  = z.MSE(2, end);
@@ -104,6 +114,7 @@ for ci = 1:numel(cls)
     % --- Build results table ---
     T = table(combo_labels, n_features, R2, cv_mse, n_cells, ...
               'VariableNames', {'sensors','n_features','R2','cv_mse','n_cells'});
+    T = T(~isnan(T.cv_mse), :);  % Drop skipped combinations
     T = sortrows(T, 'cv_mse', 'ascend');
 
     % --- Permutation test on top models ---
@@ -112,6 +123,7 @@ for ci = 1:numel(cls)
     fprintf('  Running permutation test on top %d models...\n', n_top);
 
     for ti = 1:n_top
+        if isnan(T.R2(ti)); continue; end
         combo    = strsplit(T.sensors{ti}, '+');
         col_idx  = ismember(all_tags, combo);
         X_sub    = X_full(:, col_idx);
@@ -123,7 +135,8 @@ for ci = 1:numel(cls)
         for pi = 1:op.n_perm
             y_shuf = y(randperm(numel(y)));
             z_shuf = pls(X_sub, y_shuf, 'ncomp', nc, 'cv', op.cv, ...
-                         'ploton', false, 'params', parms_sub, 'append', true);
+                         'ploton', false, 'params', parms_sub, 'append', true, ...
+                         'rm_xsout', op.rm_xsout);
             R2_shuf(pi) = sum(z_shuf.PCTVAR(2,:));
         end
         perm_p(ti) = mean(R2_shuf >= real_R2);
@@ -140,7 +153,7 @@ end
 
 % --- Plot ---
 if op.plot
-    plot_sensor_screen(screen, cls);
+    plot_sensor_screen(screen, 'cell_lines', cls);
 end
 
 end

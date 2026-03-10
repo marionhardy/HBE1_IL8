@@ -38,6 +38,7 @@ op.cell_lines    = {'AEN','NEJ'};
 op.scramble      = true;
 op.n_perm        = 100;
 op.use_1se       = false;
+op.rm_xsout      = true;  % Pass to pls.m — disable T² outlier removal if false
 op = ct_input(varargin, op);
 
 cls = op.cell_lines;
@@ -58,7 +59,7 @@ for ci = 1:numel(cls)
 
     % --- Fit real model ---
     z = pls(X, y, 'ncomp', nc, 'cv', op.cv, 'ploton', false, ...
-            'params', parms, 'append', true);
+            'params', parms, 'append', true, 'rm_xsout', op.rm_xsout);
 
     R2      = sum(z.PCTVAR(2,:));
     cv_mse  = z.MSE(2, end);
@@ -85,7 +86,8 @@ for ci = 1:numel(cls)
         for pi = 1:op.n_perm
             y_shuf = y(randperm(size(y,1)));  % Shuffle Y only
             z_shuf = pls(X, y_shuf, 'ncomp', nc, 'cv', op.cv, ...
-                         'ploton', false, 'params', parms, 'append', true);
+                         'ploton', false, 'params', parms, 'append', true, ...
+                         'rm_xsout', op.rm_xsout);
             R2_dist(pi)     = sum(z_shuf.PCTVAR(2,:));
             cv_mse_dist(pi) = z_shuf.MSE(2, end);
         end
